@@ -1,9 +1,12 @@
 #include <rosgraph_msgs/Clock.h>
 #include <rosbag/view.h>
 #include <topic_tools/shape_shifter.h>
+#include <iostream>
+#include <boost/algorithm/string.hpp>
 #include "bag_player.h"
 
-batch_ros::BagPlayer::BagPlayer(ros::NodeHandle& _nh) : nh(_nh), service_spinner(1, &service_queue)
+batch_ros::BagPlayer::BagPlayer(ros::NodeHandle& _nh, const std::set<std::string>& _wait_topics) :
+  nh(_nh), service_spinner(1, &service_queue), wait_topics(_wait_topics)
 {
   /* check sim time */
   if (!ros::Time::isSimTime())
@@ -12,19 +15,42 @@ batch_ros::BagPlayer::BagPlayer(ros::NodeHandle& _nh) : nh(_nh), service_spinner
   }
 
   /* load topics to wait on */
-  if (!nh.hasParam("wait_topics"))
+  if (wait_topics.empty() && nh.hasParam("wait_topics"))
   {
-    throw std::runtime_error("No topics to wait on defined");
+    XmlRpc::XmlRpcValue values;
+    nh.getParam("wait_topics", values);
+    for(int i = 0; i < values.size(); i++) { wait_topics.insert(values[i]); }
   }
 
-  ROS_INFO_STREAM("Wait on:");
-  XmlRpc::XmlRpcValue values;
-  nh.getParam("wait_topics", values);
-  for(int i = 0; i < values.size(); i++)
+  if (wait_topics.empty())
   {
-    std::string topic(values[i]);
-    ROS_INFO_STREAM("\t" << topic);
-    wait_topics.insert(topic);
+    std::cerr << "No topics to wait on defined, will publish without waiting for trigger" << std::endl;
+  }
+  else
+  {
+    std::set<std::string> final_wait_topics;
+
+    /* process groupped topics */
+    for (const std::string& s : wait_topics)
+    {
+      std::list<std::string> strs;
+      boost::split(strs, s, boost::is_any_of(":"));
+      if (strs.empty()) throw std::runtime_error("Empty topic name passed");
+      else if (strs.size() == 1)
+      {
+        final_wait_topics.insert(strs.front());
+      }
+      else
+      {
+        std::shared_ptr<std::map<std::string, bool>> received_states = std::make_shared<std::map<std::string,bool>>();
+        for (const std::string& t : strs) { received_states->emplace(t, false); }
+        for (const std::string& t : strs) { groupped_topic_states.emplace(t, received_states); }
+        wait_topics.
+      }
+    }
+
+    std::cout << "Wait on:" << std::endl;
+    for (const std::string& topic : wait_topics) { std::cout << "\t" << topic << std::endl; }
   }
 
   /* load parameters */
@@ -55,17 +81,17 @@ batch_ros::BagPlayer::~BagPlayer(void)
 void batch_ros::BagPlayer::load_bag(const std::string& path)
 {
   /* open bag */
-  ROS_INFO_STREAM("Loading: " << path);
+  std::cout << "Loading: " << path << std::endl;
   bag.open(path);
 
   /* get all topics and initiate publishers */
-  ROS_INFO_STREAM("Publishing to: ");
+  std::cout << "Advertising: " << std::endl;
   rosbag::View view(bag);
   for (const rosbag::ConnectionInfo* cinfo : view.getConnections())
   {
     ros::AdvertiseOptions opts(cinfo->topic, output_queue_size, cinfo->md5sum, cinfo->datatype, cinfo->msg_def);
     publishers.emplace(cinfo->topic, nh.advertise(opts));
-    ROS_INFO_STREAM("\t" << cinfo->topic << " (" << cinfo->datatype << ")");
+    std::cout << "\t" << cinfo->topic << " (" << cinfo->datatype << ")" << std::endl;
   }
 }
 
@@ -85,29 +111,16 @@ void batch_ros::BagPlayer::signal_continue(void)
 
 void batch_ros::BagPlayer::play(void)
 {
-  /* spin to get my own simulated clock publication */
-  ros::spinOnce();
+  std::cout << "Playing bag..." << std::endl;
 
   /* iterate every message on the bag */
   for (const rosbag::MessageInstance& mi : rosbag::View(bag))
   {
-    /* see if we should wait and the topic and do so */
-    if (wait_topics.find(mi.getTopic()) != wait_topics.end())
-    {
-      if (print_waits) { ROS_INFO_STREAM("Waiting on: " << mi.getTopic()); }
+    /* see if we should wait for reception of this message */
+    bool should_wait = wait_topics.find(mi.getTopic()) != wait_topics.end();
 
-      while (ros::ok())
-      {
-        std::unique_lock lock(publish_mutex);
-        cv.wait_for(lock, std::chrono::milliseconds(100), [this]{ return can_continue; });
-        if (can_continue) break;
-      }
-
-      /* we were allowed to continue, reset the flag and go ahead to publish */
-      can_continue = false;
-    }
-    /* if not a topic we should wait on, potentially introduce a delay to avoid filling queues */
-    else if (last_t.isValid() && delay_multiplier != 0)
+    /* if not, optionally introduce a delay between messages to avoid filling queues */
+    if (!should_wait && last_t.isValid() && delay_multiplier != 0)
     {
       double delta_t = ros::Duration(mi.getTime() - last_t).toSec();
       double delay_time = delta_t * delay_multiplier;
@@ -126,10 +139,28 @@ void batch_ros::BagPlayer::play(void)
     ros::Publisher& pub = publishers.at(mi.getTopic());
     pub.publish(mi.instantiate<topic_tools::ShapeShifter>());
 
+    if (should_wait)
+    {
+      if (print_waits) { std::cout << "Waiting after publish on: " << mi.getTopic() << " t: " << mi.getTime() << std::endl; }
+
+      /* wait for acknowledgement (and safely handle node shutdown request) */
+      while (ros::ok())
+      {
+        std::unique_lock lock(publish_mutex);
+        cv.wait_for(lock, std::chrono::milliseconds(100), [this]{ return can_continue; });
+        if (can_continue) break;
+      }
+
+      /* we were allowed to continue publishing, reset the flag and go ahead to publish */
+      can_continue = false;
+    }
+
     /* spin */
     if (!ros::ok()) break;
     ros::spinOnce();
   }
+
+  std::cout << "Done." << std::endl;
 }
 
 void batch_ros::BagPlayer::publish_clock(void)
