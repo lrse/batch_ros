@@ -11,11 +11,19 @@
 
 namespace batch_ros
 {
+  /**
+   * @brief The BagPlayer class
+   *
+   * BagPlayer plays a rosbag semi-synchronously. This means that it will publish (on the specified "wait topics")
+   * and wait for a Trigger service call. For the rest of the topics it will play them without waiting, at a user defined rate.
+   * Moroever, since for some topics there will be a sinchronized subscriber waiting for several messages with matching timestamps,
+   * these messages need to be sent and wait only after sending the last one of the group. Thus, "wait topics" can be specified in groups.
+   */
   class BagPlayer
   {
     public:
       BagPlayer(void) = delete;
-      BagPlayer(ros::NodeHandle& nh, const std::set<std::string>& wait_topics = {});
+      BagPlayer(ros::NodeHandle& nh, const std::set<std::set<std::string>>& wait_topics = {});
       ~BagPlayer(void);
 
       void play(void);
@@ -35,14 +43,20 @@ namespace batch_ros
       bool can_continue = false;
       std::mutex publish_mutex;
       std::condition_variable cv;
-      std::set<std::string> wait_topics;
+      std::set<std::set<std::string>> wait_topics;
       void signal_continue(void);
+      void wait_for_continue(void);
 
       /* internal state */
       std::map<std::string, ros::Publisher> publishers;
-      std::map<std::string, std::shared_ptr<std::map<std::string, bool>>> groupped_topic_states;
       rosbag::Bag bag;
       ros::Time last_t, t;
+      struct SentState
+      {
+        bool sent = false;
+        ros::Time t;
+      };
+      std::map<std::string, std::shared_ptr<std::map<std::string, SentState>>> topic_group_states;
 
       /* clock handling */
       std::mutex clock_mutex;

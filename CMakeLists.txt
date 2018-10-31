@@ -132,7 +132,7 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-file(GLOB PLAY_BAG_SOURCES src/play_bag.* src/bag_player.*)
+file(GLOB PLAY_BAG_SOURCES src/play_bag.* src/bag_player*)
 add_executable(play_bag ${PLAY_BAG_SOURCES})
 
 ## Rename C++ executable without prefix
