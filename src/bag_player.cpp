@@ -4,8 +4,8 @@
 #include <boost/algorithm/string.hpp>
 #include "bag_player.h"
 
-batch_ros::BagPlayer::BagPlayer(ros::NodeHandle& _nh, const std::set<std::set<std::string>>& _wait_topics) :
-  nh(_nh), service_spinner(1, &service_queue), wait_topics(_wait_topics)
+batch_ros::BagPlayer::BagPlayer(ros::NodeHandle& _nh) :
+  nh(_nh), service_spinner(1, &service_queue)
 {
   /* check sim time */
   if (!ros::Time::isSimTime())
@@ -13,8 +13,24 @@ batch_ros::BagPlayer::BagPlayer(ros::NodeHandle& _nh, const std::set<std::set<st
     throw std::runtime_error("Simulated time needs to be set");
   }
 
+  /* load optional topic remaps */
+  std::vector<std::string> remap_requests;
+  if (nh.getParam("remaps", remap_requests))
+  {
+    for (const std::string& remap_request : remap_requests)
+    {
+      std::list<std::string> topic_pair;
+      boost::split(topic_pair, remap_request, boost::is_any_of(":"));
+      if (topic_pair.size() != 2)
+      {
+        throw std::runtime_error("Bad topic remap format");
+      }
+      remaps.emplace(topic_pair.front(), topic_pair.back());
+    }
+  }
+
   /* load topics to wait on */
-  if (wait_topics.empty() && nh.hasParam("wait_topics"))
+  if (nh.hasParam("wait_topics"))
   {
     /* this parameter holds groups as topics joined by a ':' */
     std::vector<std::string> values;
@@ -41,21 +57,21 @@ batch_ros::BagPlayer::BagPlayer(ros::NodeHandle& _nh, const std::set<std::set<st
     }
   }
 
-  /* check for no duplicates among groups */
-  std::set<std::string> flat_wait_topics;
-  for (const std::set<std::string>& topic_groups : wait_topics)
-  {
-    size_t before = flat_wait_topics.size();
-    flat_wait_topics.insert(topic_groups.begin(), topic_groups.end());
-    if (flat_wait_topics.size() != (before + topic_groups.size())) throw std::runtime_error("Duplicate topics among groups");
-  }
-
   if (wait_topics.empty())
   {
     std::cerr << "No topics to wait on defined, will publish without waiting for trigger" << std::endl;
   }
   else
   {
+    /* check for no duplicates among groups */
+    std::set<std::string> flat_wait_topics;
+    for (const std::set<std::string>& topic_groups : wait_topics)
+    {
+      size_t before = flat_wait_topics.size();
+      flat_wait_topics.insert(topic_groups.begin(), topic_groups.end());
+      if (flat_wait_topics.size() != (before + topic_groups.size())) throw std::runtime_error("Duplicate topics among groups");
+    }
+
     /* for each topic group, we need to save a "sent" state for each topic in the group */
     for (const std::set<std::string>& topic_group : wait_topics)
     {
@@ -80,6 +96,7 @@ batch_ros::BagPlayer::BagPlayer(ros::NodeHandle& _nh, const std::set<std::set<st
   nh.param("print_waits", print_waits, print_waits);
   nh.param("delay_multiplier", delay_multiplier, delay_multiplier);
   nh.param("output_queue_size", output_queue_size, output_queue_size);
+  nh.param("start_offset", start_offset, start_offset);
 
   /* prepare trigger service */
   ros::AdvertiseServiceOptions opts = ros::AdvertiseServiceOptions::create<std_srvs::Trigger>("trigger", boost::bind(&BagPlayer::on_trigger, this, _1, _2), ros::VoidPtr(), &service_queue);
@@ -111,9 +128,15 @@ void batch_ros::BagPlayer::load_bag(const std::string& path)
   rosbag::View view(bag);
   for (const rosbag::ConnectionInfo* cinfo : view.getConnections())
   {
-    ros::AdvertiseOptions opts(cinfo->topic, output_queue_size, cinfo->md5sum, cinfo->datatype, cinfo->msg_def);
+    std::string advertised_topic = (remaps.find(cinfo->topic) != remaps.end() ? remaps.at(cinfo->topic) : cinfo->topic);
+    ros::AdvertiseOptions opts(advertised_topic, output_queue_size, cinfo->md5sum, cinfo->datatype, cinfo->msg_def);
     publishers.emplace(cinfo->topic, nh.advertise(opts));
-    std::cout << "\t" << cinfo->topic << " (" << cinfo->datatype << ")" << std::endl;
+    std::cout << "\t" << cinfo->topic << " (" << cinfo->datatype << ")";
+    if (advertised_topic != cinfo->topic)
+    {
+      std::cout << ", advertised as: " << advertised_topic << std::endl;
+    }
+    std::cout << std::endl;
   }
 }
 

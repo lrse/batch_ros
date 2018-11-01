@@ -3,6 +3,7 @@
   <arg name="print_waits" default="false"/>
 
   <node pkg="batch_ros" type="play_bag" name="play_bag" args="$(arg bag)" output="screen">
+    <rosparam command="delete"/>
     <rosparam command="load" file="$(find batch_ros)/launch/euroc.config"/>
     <param name="print_waits" value="$(arg print_waits)"/>
   </node>

@@ -23,7 +23,7 @@ namespace batch_ros
   {
     public:
       BagPlayer(void) = delete;
-      BagPlayer(ros::NodeHandle& nh, const std::set<std::set<std::string>>& wait_topics = {});
+      BagPlayer(ros::NodeHandle& nh);
       ~BagPlayer(void);
 
       void play(void);
@@ -44,6 +44,7 @@ namespace batch_ros
       std::mutex publish_mutex;
       std::condition_variable cv;
       std::set<std::set<std::string>> wait_topics;
+      std::map<std::string, std::string> remaps;
       void signal_continue(void);
       void wait_for_continue(void);
 
@@ -70,6 +71,7 @@ namespace batch_ros
       bool print_waits = false;
       double delay_multiplier = 0;
       int output_queue_size = 10;
+      double start_offset = 0;
   };
 }
 

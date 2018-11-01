@@ -6,11 +6,32 @@
 
 void batch_ros::BagPlayer::play(void)
 {
-  std::cout << "Playing bag..." << std::endl;
+  bool started = false;
+
+  /* get bag time range */
+  rosbag::View v(bag);
+  ros::Time start = v.getBeginTime();
+  //ros::Time end = v.getEndTime();
 
   /* iterate every message on the bag */
-  for (const rosbag::MessageInstance& mi : rosbag::View(bag))
+  for (const rosbag::MessageInstance& mi : rosbag::View(bag, start + ros::Duration(start_offset)))
   {
+    /* advance clock towards current bag time */
+    {
+      std::unique_lock lock(clock_mutex);
+      t = mi.getTime();
+    }
+
+    if (!started)
+    {
+      std::cout << "Waiting for start trigger..." << std::endl;
+      wait_for_continue();
+      started = true;
+
+      ros::WallDuration(1.0).sleep(); // TODO: this eliminates race condition, improve
+      std::cout << "Playing bag..." << std::endl;
+    }
+
     /* see if we should wait for reception of this message */
     auto it = topic_group_states.find(mi.getTopic());
     bool is_wait_topic = (it != topic_group_states.end());
@@ -22,12 +43,6 @@ void batch_ros::BagPlayer::play(void)
       double delay_time = delta_t * delay_multiplier;
       ROS_DEBUG_STREAM("delaying publish for: " << delay_time << " (real: " << delta_t << ", multiplier: " << delay_multiplier << ")");
       ros::WallRate(ros::Duration(delay_time)).sleep();
-    }
-
-    /* advance clock towards current bag time */
-    {
-      std::unique_lock lock(clock_mutex);
-      t = mi.getTime();
     }
     last_t = mi.getTime();
 
