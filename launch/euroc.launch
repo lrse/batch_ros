@@ -1,5 +1,8 @@
 <launch>
+  <!-- path to bag file -->
   <arg name="bag"/>
+
+  <!-- inform of any waits performed by the player, to debug any problems -->
   <arg name="print_waits" default="false"/>
 
   <node pkg="batch_ros" type="play_bag" name="play_bag" args="$(arg bag)" output="screen">
