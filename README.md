@@ -22,7 +22,7 @@ For topics which should not be waited upon, the player also reproduces them but 
 
 The player also publishes the clock using the current message time, so it works like rosbag with the `--clock` option.
 
-## How to use it
+## How to use it from your code
 
 There are two modifications you need to do on your node. First, you need to signal the player to start playing by invoking the trigger service. Thus, you should add this code at the end of your initialization logic (after all topics haven been advertised and subscriptions have been made):
 
@@ -39,9 +39,15 @@ There are two modifications you need to do on your node. First, you need to sign
     
 For most cases this is all that is needed. However, a common pattern is to have a callback for a set of synchronized messages (for example image and camera info). This means that you would produce a single trigger for several topics. To deal with this, you can specify "groupped" topics to wait on. In this case, messages for a topic group are all sent without waiting until the last message in the group is sent.
 
-## Configuration
+## How to run and configure
 
 Configuration is made through ROS parameters, which can be easily specified in a YAML file. Check the `launch/` directory to see an example configuration.
+
+In general you can reuse the supplied `.launch` file, which expects the bag path and parameter configuration file-name as arguments. As an example, a configuration file for the EuRoC MAV dataset is provided, which can be run as:
+
+    roslaunch bath_ros play_bag.launch bag:=<path> config:=euroc
+    
+This will load the configuration named `euroc.yaml` present in the `launch` directory. You can look into that file to understand the expected parameters and how to configure batch_ros for a particular rosbag.
     
 ## Caveats
 
@@ -62,7 +68,9 @@ Since the ROS clock will be halted before the bag starts playing, if your node n
     
 This will perform a busy wait without depending on ROS time to advance and obtain the latest available transform.
  
+# License
 
+This software is provided under the GPLv2 license.
 
  
  
